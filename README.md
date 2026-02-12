@@ -43,8 +43,8 @@ Constants at the top of `main.py`:
 | ------------------- | --------------------------- | ------------------------ |
 | `DOCS_DIR`          | Source documents directory  | `./docs`                 |
 | `CHROMA_DIR`        | Persisted vector store path | `./.chroma_index`        |
-| `CHAT_MODEL`        | Ollama chat model name      | `kimi-k2.5:cloud`        |
-| `EMBED_MODEL`       | Ollama embedding model name | `embeddinggemma:latest`  |
+| `CHAT_MODEL`        | Ollama chat model name      | `kimi-k2.5:latest`       |
+| `EMBED_MODEL`       | Embedding model name        | `embeddinggemma:latest`  |
 | `OLLAMA_BASE_URL`   | Ollama server URL           | `http://127.0.0.1:11434` |
 | `MAX_HISTORY_TURNS` | Chat history turns kept     | `10`                     |
 
@@ -59,14 +59,15 @@ LLM_BASE_URL=https://your-provider.example.com/api/v1/
 LLM_API_KEY=sk-your-api-key
 ```
 
-| Env Var        | Purpose                                | Default               |
-| -------------- | -------------------------------------- | --------------------- |
-| `LLM_PROVIDER` | `ollama` (default) or any other value  | `ollama`              |
-| `LLM_MODEL`    | Chat model name                        | `CHAT_MODEL` constant |
-| `LLM_BASE_URL` | API base URL (required for non-Ollama) | `""`                  |
-| `LLM_API_KEY`  | API key (required for non-Ollama)      | `""`                  |
+| Env Var        | Purpose                                | Default                 |
+| -------------- | -------------------------------------- | ----------------------- |
+| `LLM_PROVIDER` | `ollama` (default) or any other value  | `ollama`                |
+| `LLM_MODEL`    | Chat model name                        | `CHAT_MODEL` constant   |
+| `LLM_BASE_URL` | API base URL (required for non-Ollama) | `""`                    |
+| `LLM_API_KEY`  | API key (required for non-Ollama)      | `""`                    |
+| `EMBED_MODEL`  | Embedding model override               | `embeddinggemma:latest` |
 
-Ollama is still required for embeddings regardless of the chat provider.
+Embeddings always use Ollama regardless of the chat provider, since not all OpenAI-compatible APIs offer an embeddings endpoint. The embedding model is auto-pulled from the Ollama library on first run if not already downloaded. Set `EMBED_MODEL` to override the default embedding model name.
 
 ## Re-indexing
 

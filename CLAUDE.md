@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-QuickRAG is a single-file local RAG (Retrieval-Augmented Generation) application. It loads `.md` and `.txt` documents from a local directory, chunks and indexes them into a ChromaDB vector store, then provides an interactive Q&A loop using Ollama-hosted LLMs. The chat LLM can optionally be switched to any OpenAI-compatible API (e.g. OpenWebUI) via environment variables; embeddings always use Ollama.
+QuickRAG is a single-file local RAG (Retrieval-Augmented Generation) application. It loads `.md` and `.txt` documents from a local directory, chunks and indexes them into a ChromaDB vector store, then provides an interactive Q&A loop using Ollama-hosted LLMs. The chat LLM can be switched to any OpenAI-compatible API (e.g. OpenWebUI) via the `LLM_PROVIDER` environment variable. Embeddings always use Ollama; the embedding model is auto-pulled on first run if not already downloaded.
 
 ## Commands
 
@@ -36,7 +36,7 @@ Everything lives in `main.py` — there are no modules or packages. The flow is:
 | `DOCS_DIR`          | Source documents path                               | `./docs`                 |
 | `CHROMA_DIR`        | Persisted vector store                              | `./.chroma_index`        |
 | `CHAT_MODEL`        | Default Ollama chat model name                      | `kimi-k2.5:cloud`        |
-| `EMBED_MODEL`       | Ollama embedding model (always Ollama)              | `embeddinggemma:latest`  |
+| `EMBED_MODEL`       | Embedding model (always Ollama, auto-pulled)        | `embeddinggemma:latest`  |
 | `OLLAMA_BASE_URL`   | Ollama server URL (env override: `OLLAMA_BASE_URL`) | `http://127.0.0.1:11434` |
 | `MAX_HISTORY_TURNS` | Number of past Q&A turns kept in LLM context        | `10`                     |
 | `LLM_PROVIDER`      | Chat LLM provider: `ollama` or any OpenAI-compatible name | `ollama`            |
@@ -48,7 +48,7 @@ Everything lives in `main.py` — there are no modules or packages. The flow is:
 
 - **LangChain** ecosystem: `langchain`, `langchain-community`, `langchain-chroma`, `langchain-ollama`, `langchain-openai`, `langchain-text-splitters`
 - **ChromaDB**: Vector store with SQLite persistence (via `langchain-chroma`)
-- **Ollama**: Local LLM inference — always required for embeddings, optional for chat (must be running separately)
+- **Ollama**: Always required (serves embeddings for all providers); must be running separately
 - **OpenAI-compatible APIs**: Optional chat provider via `langchain-openai` (e.g. OpenWebUI, LiteLLM, vLLM)
 - **python-dotenv**: Loads `.env` file from project root into `os.environ` at startup (shell env vars take precedence)
 
@@ -56,6 +56,6 @@ Everything lives in `main.py` — there are no modules or packages. The flow is:
 
 - The `docs/` directory (and its subdirectories) contains the knowledge base documents — any `.md` or `.txt` files placed here are indexed
 - `.chroma_index/` is the persisted vector store — delete it to force re-indexing
-- At startup the app checks that Ollama is reachable and that documents exist, exiting with a clear message on failure
+- At startup the app always checks that Ollama is reachable (required for embeddings) and auto-pulls the embedding model if missing, then verifies documents exist — exiting with a clear message on failure
 - No tests exist yet
 - Python 3.11 required (`.python-version`)

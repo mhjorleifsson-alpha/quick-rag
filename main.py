@@ -6,7 +6,8 @@ interactive Q&A loop powered by an Ollama-hosted LLM.
 
 The chat LLM provider can be switched to any OpenAI-compatible API (OpenWebUI,
 LiteLLM, vLLM, etc.) via the ``LLM_PROVIDER`` environment variable. Embeddings
-always use Ollama regardless of the chat provider.
+always use Ollama regardless of the chat provider; the embedding model is
+auto-pulled on first run if not already downloaded.
 
 Conversation history is maintained for the duration of the session so that
 follow-up questions can reference earlier answers.
@@ -43,7 +44,7 @@ DOCS_DIR = Path("./docs")               # put your .md, .txt docs here
 CHROMA_DIR = Path("./.chroma_index")     # persisted vector store on disk
 
 CHAT_MODEL = "kimi-k2.5:cloud"
-EMBED_MODEL = "embeddinggemma:latest"
+EMBED_MODEL = os.getenv("EMBED_MODEL", "embeddinggemma:latest")
 
 # Ollama default base url is http://127.0.0.1:11434
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
@@ -88,6 +89,64 @@ def _check_ollama_reachable(base_url: str) -> None:
         )
 
 
+def _ensure_ollama_model(model_name: str, base_url: str) -> None:
+    """Ensure *model_name* is available in Ollama, pulling it if missing.
+
+    Args:
+        model_name: Ollama model identifier (e.g. ``"embeddinggemma:latest"``).
+        base_url:   Ollama server URL.
+
+    Raises:
+        SystemExit: If the pull fails or Ollama is unreachable.
+    """
+    import json
+
+    # --- check via /api/show ---
+    payload = json.dumps({"name": model_name}).encode()
+    req = urllib.request.Request(
+        f"{base_url}/api/show",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        urllib.request.urlopen(req, timeout=10)  # noqa: S310
+        return  # model exists
+    except urllib.error.HTTPError:
+        pass  # 404 → model not found, proceed to pull
+
+    # --- pull via /api/pull (streaming) ---
+    print(f"Embedding model '{model_name}' not found — pulling from Ollama library …")
+    payload = json.dumps({"model": model_name, "stream": True}).encode()
+    req = urllib.request.Request(
+        f"{base_url}/api/pull",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=600) as resp:  # noqa: S310
+            for line in resp:
+                if not line.strip():
+                    continue
+                event = json.loads(line)
+                status = event.get("status", "")
+                total = event.get("total", 0)
+                completed = event.get("completed", 0)
+                if total:
+                    pct = completed / total * 100
+                    print(f"  {status}: {pct:5.1f}%", end="\r", flush=True)
+                else:
+                    print(f"  {status}")
+                if status == "success":
+                    print(f"\nModel '{model_name}' ready.")
+                    return
+    except (urllib.error.URLError, OSError) as exc:
+        raise SystemExit(
+            f"Failed to pull model '{model_name}' from Ollama: {exc}"
+        )
+
+    raise SystemExit(f"Pull of '{model_name}' did not complete successfully.")
+
+
 def _build_chat_llm():
     """Build the chat LLM based on the ``LLM_PROVIDER`` environment variable.
 
@@ -120,6 +179,18 @@ def _build_chat_llm():
         base_url=LLM_BASE_URL,
         api_key=LLM_API_KEY,  # type: ignore[arg-type]  # str accepted at runtime
     )
+
+
+def _build_embeddings():
+    """Build the embedding model — always uses Ollama.
+
+    Embeddings are always served by Ollama regardless of the chat provider,
+    since not all OpenAI-compatible APIs offer an embeddings endpoint.
+
+    Returns:
+        An ``OllamaEmbeddings`` instance.
+    """
+    return OllamaEmbeddings(model=EMBED_MODEL, base_url=OLLAMA_BASE_URL)
 
 
 def load_documents(docs_dir: Path) -> list:
@@ -182,7 +253,7 @@ def build_or_load_vectorstore(docs_dir: Path, chroma_dir: Path) -> Chroma:
     Returns:
         A ready-to-query ``Chroma`` vector store instance.
     """
-    embeddings = OllamaEmbeddings(model=EMBED_MODEL, base_url=OLLAMA_BASE_URL)
+    embeddings = _build_embeddings()
 
     if chroma_dir.exists():
         return Chroma(
@@ -294,8 +365,9 @@ if __name__ == "__main__":
     if not DOCS_DIR.exists():
         raise SystemExit(f"Docs folder not found: {DOCS_DIR.resolve()}")
 
-    # Ollama is always needed for embeddings, regardless of chat provider.
+    # Ollama is always required for embeddings, regardless of chat provider.
     _check_ollama_reachable(OLLAMA_BASE_URL)
+    _ensure_ollama_model(EMBED_MODEL, OLLAMA_BASE_URL)
 
     llm = _build_chat_llm()
     print(f"Chat provider: {LLM_PROVIDER} | Model: {LLM_MODEL}")
