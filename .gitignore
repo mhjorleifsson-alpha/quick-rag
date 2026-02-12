@@ -8,3 +8,9 @@ wheels/
 
 # Virtual environments
 .venv
+docs/CFIS/
+CLAUDE.md
+.chroma_index/
+INDEX.txt
+.cladue/
+__pycache__/
