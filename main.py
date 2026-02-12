@@ -4,14 +4,19 @@ Single-file RAG application that loads .md and .txt documents from a local
 directory, indexes them into a ChromaDB vector store, and provides an
 interactive Q&A loop powered by an Ollama-hosted LLM.
 
+The chat LLM provider can be switched to any OpenAI-compatible API (OpenWebUI,
+LiteLLM, vLLM, etc.) via the ``LLM_PROVIDER`` environment variable. Embeddings
+always use Ollama regardless of the chat provider.
+
 Conversation history is maintained for the duration of the session so that
 follow-up questions can reference earlier answers.
 
 Usage:
     uv run python main.py
 
-Configuration constants are defined at the top of this file. The Ollama
-base URL can also be overridden via the OLLAMA_BASE_URL environment variable.
+Configuration constants are defined at the top of this file. A ``.env`` file in
+the project root is loaded automatically via python-dotenv. See README.md
+for the full list of environment variable overrides.
 """
 
 from __future__ import annotations
@@ -22,11 +27,16 @@ import urllib.request
 from pathlib import Path
 from typing import List, Tuple
 
+from dotenv import load_dotenv
+
+load_dotenv()  # Load .env file before reading env vars
+
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings, ChatOllama
+from langchain_openai import ChatOpenAI
 
 
 DOCS_DIR = Path("./docs")               # put your .md, .txt docs here
@@ -37,6 +47,14 @@ EMBED_MODEL = "embeddinggemma:latest"
 
 # Ollama default base url is http://127.0.0.1:11434
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+
+# LLM provider configuration — override via environment variables.
+# Set LLM_PROVIDER to "openai" (or any non-"ollama" value like "openwebui")
+# to use an OpenAI-compatible API for chat instead of Ollama.
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
+LLM_MODEL = os.getenv("LLM_MODEL", CHAT_MODEL)
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "")
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 
 # Maximum number of past Q&A turns to include in the LLM prompt.
 # Keeps token usage bounded while preserving conversational context.
@@ -68,6 +86,40 @@ def _check_ollama_reachable(base_url: str) -> None:
             f"Cannot reach Ollama at {base_url} — is the server running?\n"
             f"  Detail: {exc}"
         )
+
+
+def _build_chat_llm():
+    """Build the chat LLM based on the ``LLM_PROVIDER`` environment variable.
+
+    Returns:
+        A LangChain chat model — either ``ChatOllama`` (default) or
+        ``ChatOpenAI`` for any OpenAI-compatible provider.
+
+    Raises:
+        SystemExit: If an OpenAI-compatible provider is selected but
+            ``LLM_BASE_URL`` or ``LLM_API_KEY`` is missing.
+    """
+    if LLM_PROVIDER == "ollama":
+        base_url = LLM_BASE_URL if LLM_BASE_URL else OLLAMA_BASE_URL
+        return ChatOllama(model=LLM_MODEL, base_url=base_url)
+
+    # Any non-"ollama" value (e.g. "openai", "openwebui") uses ChatOpenAI.
+    if not LLM_BASE_URL:
+        raise SystemExit(
+            f"LLM_PROVIDER is '{LLM_PROVIDER}' but LLM_BASE_URL is not set. "
+            "Set the LLM_BASE_URL environment variable to the API endpoint."
+        )
+    if not LLM_API_KEY:
+        raise SystemExit(
+            f"LLM_PROVIDER is '{LLM_PROVIDER}' but LLM_API_KEY is not set. "
+            "Set the LLM_API_KEY environment variable."
+        )
+
+    return ChatOpenAI(
+        model=LLM_MODEL,
+        base_url=LLM_BASE_URL,
+        api_key=LLM_API_KEY,  # type: ignore[arg-type]  # str accepted at runtime
+    )
 
 
 def load_documents(docs_dir: Path) -> list:
@@ -180,6 +232,7 @@ def answer_question(
     vectordb: Chroma,
     question: str,
     chat_history: list[Tuple[str, str]],
+    llm,
 ) -> Tuple[str, str]:
     """Retrieve relevant chunks and generate an LLM answer with citations.
 
@@ -191,6 +244,8 @@ def answer_question(
         question:      The user's natural-language question.
         chat_history:  List of ``(user_question, assistant_answer)`` tuples
                        from earlier turns in this session.
+        llm:           A pre-built LangChain chat model (``ChatOllama`` or
+                       ``ChatOpenAI``).
 
     Returns:
         A ``(display_text, raw_answer)`` tuple.  *display_text* includes the
@@ -221,8 +276,6 @@ def answer_question(
     user_content = f"Question:\n{question}\n\nContext:\n{context}"
     messages.append(HumanMessage(content=user_content))
 
-    llm = ChatOllama(model=CHAT_MODEL, base_url=OLLAMA_BASE_URL)
-
     try:
         response = llm.invoke(messages)
     except Exception as exc:  # noqa: BLE001 — surface any LLM backend failure
@@ -241,7 +294,11 @@ if __name__ == "__main__":
     if not DOCS_DIR.exists():
         raise SystemExit(f"Docs folder not found: {DOCS_DIR.resolve()}")
 
+    # Ollama is always needed for embeddings, regardless of chat provider.
     _check_ollama_reachable(OLLAMA_BASE_URL)
+
+    llm = _build_chat_llm()
+    print(f"Chat provider: {LLM_PROVIDER} | Model: {LLM_MODEL}")
 
     db = build_or_load_vectorstore(DOCS_DIR, CHROMA_DIR)
 
@@ -258,7 +315,7 @@ if __name__ == "__main__":
             break
 
         try:
-            display, raw = answer_question(db, q, history)
+            display, raw = answer_question(db, q, history, llm)
             history.append((q, raw))
             print("\n" + display)
         except Exception as exc:  # noqa: BLE001
